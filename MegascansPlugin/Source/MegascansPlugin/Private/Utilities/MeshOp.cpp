@@ -1,3 +1,4 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
 #include "Utilities/MeshOp.h"
 #include "UnrealEd/Classes/Factories/FbxImportUI.h"
 #include "UnrealEd/Classes/Factories/FbxStaticMeshImportData.h"
@@ -17,8 +18,8 @@
 #include "Runtime/Foliage/Public/FoliageType.h"
 #include "Runtime/Foliage/Public/FoliageType_InstancedStaticMesh.h"
 #include "Runtime/AssetRegistry/Public/AssetRegistryModule.h"
+#include "PerPlatformProperties.h"
 
-#include "Editor.h"
 
 
 
@@ -44,6 +45,7 @@ FString FMeshOps::ImportMesh(const FString& MeshPath, const FString& Destination
 
 	UFbxImportUI* ImportOptions;
 	MeshPath.Split(TEXT("."), &FilePath, &FileExtension);
+	
 
 	FileExtension = FPaths::GetExtension(MeshPath);
 	if (FileExtension == TEXT("obj") || FileExtension == TEXT("fbx"))
@@ -96,14 +98,12 @@ void FMeshOps::ApplyAbcLods(UStaticMesh* SourceMesh, const TArray<FString>& LodP
 	UEditorAssetLibrary::DeleteDirectory(LodDestination);
 }
 
-void FMeshOps::CreateFoliageAsset(const FString& FoliagePath, UStaticMesh* SourceAsset, const FString& FoliageAssetName)
+void FMeshOps::CreateFoliageAsset(const FString& FoliagePath, UStaticMesh* SourceAsset, const FString& FoliageAssetName, bool bSavePackage)
 {
 	
 	if (SourceAsset == nullptr) return;
-	FString FoliageTypePath = FPaths::Combine(FoliagePath, TEXT("Foliage/"));	
-
-	//IAssetTools& AssetTools = FModuleManager::GetModuleChecked<FAssetToolsModule>("AssetTools").Get();	
-
+	FString FoliageTypePath = FPaths::Combine(FoliagePath, TEXT("Foliage/"));
+	//IAssetTools& AssetTools = FModuleManager::GetModuleChecked<FAssetToolsModule>("AssetTools").Get();
 	FString PackageName = FoliageTypePath;
 	PackageName += FoliageAssetName;
 	UPackage* Package = CreatePackage(NULL, *PackageName);
@@ -112,13 +112,11 @@ void FMeshOps::CreateFoliageAsset(const FString& FoliagePath, UStaticMesh* Sourc
 	FAssetRegistryModule::AssetCreated(FoliageAsset);
 	FoliageAsset->PostEditChange();
 	Package->MarkPackageDirty();
-
 	//AssetUtils::SavePackage(FoliageAsset);
-
 	auto* CurrentWorld = GEditor->GetEditorWorldContext().World();
 	AInstancedFoliageActor* IFA = AInstancedFoliageActor::GetInstancedFoliageActorForCurrentLevel(CurrentWorld, true);
 	IFA->AddFoliageType(FoliageAsset);
-
+	
 }
 
 
@@ -151,11 +149,11 @@ void FMeshOps::RemoveExtraMaterialSlot(UStaticMesh* SourceMesh)
 
 	for (int i = 1; i < SourceMesh->GetNumLODs(); i++)
 	{
-		FMeshSectionInfo MeshSectionInfo = SourceMesh->SectionInfoMap.Get(i, 0);
-		//FMeshSectionInfo MeshSectionInfo = SourceMesh->GetSectionInfoMap().Get(i, 0);
+		
+		FMeshSectionInfo MeshSectionInfo = SourceMesh->GetSectionInfoMap().Get(i, 0);
 		MeshSectionInfo.MaterialIndex = 0;
-		SourceMesh->SectionInfoMap.Set(i, 0, MeshSectionInfo);
-		//SourceMesh->GetSectionInfoMap().Set(i, 0, MeshSectionInfo);
+		
+		SourceMesh->GetSectionInfoMap().Set(i, 0, MeshSectionInfo);
 		
 	}
 
@@ -215,8 +213,22 @@ UAbcImportSettings* FMeshOps::GetAbcSettings()
 	AlembicOptions->MaterialSettings.bCreateMaterials = false;
 	AlembicOptions->SamplingSettings.FrameStart = 0;
 	AlembicOptions->SamplingSettings.FrameEnd = 1;
-	AlembicOptions->ConversionSettings.Rotation = FVector(00, 00, 00);
+	AlembicOptions->ConversionSettings.Rotation = FVector(90, 00, 00);
+	AlembicOptions->ConversionSettings.Scale = FVector(1.0, -1.0, 1.0);
+	AlembicOptions->ConversionSettings.bFlipU = false;
+	AlembicOptions->ConversionSettings.bFlipV = true;
 	return AlembicOptions;
+}
+
+void FMeshOps::LodDistanceTest(UStaticMesh* SourceMesh)
+{
+	SourceMesh->bAutoComputeLODScreenSize = false;
+	FStaticMeshSourceModel& SourceModel = SourceMesh->GetSourceModel(0);
+	SourceModel.ScreenSize = FPerPlatformFloat(1);
+	FStaticMeshSourceModel& SourceModel1 = SourceMesh->GetSourceModel(1);
+	SourceModel1.ScreenSize = FPerPlatformFloat(0.5);
+
+
 }
 
 

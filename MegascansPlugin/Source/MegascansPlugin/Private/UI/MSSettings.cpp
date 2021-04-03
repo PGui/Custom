@@ -1,3 +1,4 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
 #include "UI/MSSettings.h"
 
 
@@ -28,4 +29,22 @@ UMaterialPresetsSettings::UMaterialPresetsSettings(const FObjectInitializer& Obj
 {
 	
 }
+
+#if WITH_EDITOR
+void UMaterialPresetsSettings::PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent)
+{
+	Super::PostEditChangeProperty(PropertyChangedEvent);
+	// TODO : Only save the property thats getting changed.
+	UMaterialAssetSettings* MatOverridePathSettings = GetMutableDefault<UMaterialAssetSettings>();
+	MatOverridePathSettings->MasterMaterial3d = MasterMaterial3d->GetPathName();
+	MatOverridePathSettings->MasterMaterialPlant = MasterMaterialPlant->GetPathName();
+	MatOverridePathSettings->MasterMaterialSurface = MasterMaterialSurface->GetPathName();
+
+	MatOverridePathSettings->SaveConfig();
+
+	UE_LOG(LogTemp, Error, TEXT("Surface override saved : %s"), *MatOverridePathSettings->MasterMaterialSurface);
+
+}
+
+#endif
 

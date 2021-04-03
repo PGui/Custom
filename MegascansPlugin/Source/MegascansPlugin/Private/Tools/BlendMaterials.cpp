@@ -1,8 +1,10 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
 #include "Tools/BlendMaterials.h"
 #include "EditorAssetLibrary.h"
 #include "Utilities/MiscUtils.h"
 #include "Utilities/MaterialUtils.h"
 #include "UI/MSSettings.h"
+#include "Utilities/Analytics.h"
 
 #include "Editor/UnrealEd/Classes/Factories/MaterialInstanceConstantFactoryNew.h"
 #include "Runtime/Engine/Classes/Materials/MaterialInstanceConstant.h"
@@ -30,23 +32,26 @@ TSharedPtr<FMaterialBlend> FMaterialBlend::Get()
 
 void FMaterialBlend::BlendSelectedMaterials()
 {
+	TSharedPtr<FJsonObject> BlendAnalytics = FAnalytics::Get()->GenerateBlendAnalyticsJson();
+	FAnalytics::Get()->SendAnalytics(BlendAnalytics);
+
 	FString FailueReason;
 	const UMaterialBlendSettings* BlendSettings = GetDefault<UMaterialBlendSettings>();
 
-	TArray<UMaterialInstanceConstant*> SelectedMaterialInstances = AssetUtils::GetSelectedAssets<UMaterialInstanceConstant>(TEXT("MaterialInstanceConstant"));
+	TArray<UMaterialInstanceConstant*> SelectedMaterialInstances = AssetUtils::GetSelectedAssets(TEXT("MaterialInstanceConstant"));
 
 	if (SelectedMaterialInstances.Num() < 2)
 	{
 		FMessageDialog::Open(EAppMsgType::Ok, FText(FText::FromString("Select two or more material instances to perform this operation.")));
 		return;
 	}
-	if (SelectedMaterialInstances.Num() > 4)
+	if (SelectedMaterialInstances.Num() > 3)
 	{
-		FMessageDialog::Open(EAppMsgType::Ok, FText(FText::FromString("Current Material Blending setup doesn't support more than 4 material instances.")));
+		FMessageDialog::Open(EAppMsgType::Ok, FText(FText::FromString("Current Material Blending setup doesn't support more than 3 material instances.")));
 		return;
 		// Not supported number
 	}
-
+	ManageMaterialVersion(DBlendMasterMaterial);
 	FString MasterMaterialPath = GetMaterial(DBlendMasterMaterial);
 
 	if (MasterMaterialPath == TEXT(""))
@@ -93,21 +98,18 @@ void FMaterialBlend::BlendSelectedMaterials()
 
 	auto BlendSetIt = BlendSets.CreateConstIterator();
 	for (UMaterialInstanceConstant* SelectedInstance : SelectedMaterialInstances)
-	{
-		
+	{		
 		for (FString MapType : SupportedMapTypes)
 		{
 			UTexture* PluggedMap = UMaterialEditingLibrary::GetMaterialInstanceTextureParameterValue(SelectedInstance, FName(*MapType));
 			if (PluggedMap)
 			{
-				FName TargetParameterName = *(*BlendSetIt + TEXT(" ") + MapType);
+				FName TargetParameterName = *(*BlendSetIt + TEXT(" Layer ")+ MapType + TEXT(" Map"));
 				UMaterialEditingLibrary::SetMaterialInstanceTextureParameterValue(InstancedBlendMaterial, TargetParameterName, PluggedMap);
 			}
 		}
-
 		++BlendSetIt;
 	}
-
 
 }
 

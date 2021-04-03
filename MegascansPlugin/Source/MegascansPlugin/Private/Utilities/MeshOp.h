@@ -1,6 +1,7 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
 #pragma once
 #include "CoreMinimal.h"
-#include "AssetPreferencesData.h"
+
 
 class UFbxImportUI;
 class UStaticMesh;
@@ -24,6 +25,8 @@ public:
 	void ApplyLods(const TArray<FString>& LodList, UStaticMesh* SourceMesh);
 	TArray<FString> ImportLodsAsStaticMesh(const TArray<FString>& LodList, const FString& AssetDestination);
 	void ApplyAbcLods(UStaticMesh* SourceMesh, const TArray<FString>& LodPathList, const FString& AssetDestination);
-	void CreateFoliageAsset(const FString& FoliagePath, UStaticMesh* SourceAsset, const FString& FoliageAssetName);
+	void CreateFoliageAsset(const FString& FoliagePath, UStaticMesh* SourceAsset, const FString& FoliageAssetName, bool bSavePackage = false);
 	void RemoveExtraMaterialSlot(UStaticMesh* SourceMesh);
+
+	void LodDistanceTest(UStaticMesh* SourceMesh);
 };

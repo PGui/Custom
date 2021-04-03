@@ -1,3 +1,4 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
 #include "UI/QMSUIManager.h"
 #include "UI/MSStyle.h"
 
@@ -62,9 +63,11 @@ void FQMSUIManagerImpl::SetupMenuItem()
 {
 	FMSStyle::SetIcon("Logo", "Logo80x80");
 	FMSStyle::SetIcon("ContextLogo", "Logo32x32");
+	
 
 	FLevelEditorModule& LevelEditorModule = FModuleManager::LoadModuleChecked<FLevelEditorModule>(LEVELEDITOR_MODULE_NAME);
 	TSharedPtr<FExtender> ToolbarExtender = MakeShareable(new FExtender);
+	
 	ToolbarExtender->AddToolBarExtension("Settings", EExtensionHook::After, nullptr, FToolBarExtensionDelegate::CreateRaw(this, &FQMSUIManagerImpl::FillToolbar));
 	LevelEditorModule.GetToolBarExtensibilityManager()->AddExtender(ToolbarExtender);
 }

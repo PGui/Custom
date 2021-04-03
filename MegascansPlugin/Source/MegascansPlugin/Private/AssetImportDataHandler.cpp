@@ -1,3 +1,4 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
 #include "AssetImportDataHandler.h"
 
 TSharedPtr<FAssetDataHandler> FAssetDataHandler::AssetDataHandlerInst;
@@ -20,17 +21,9 @@ TSharedPtr<FAssetDataHandler> FAssetDataHandler::Get()
 TSharedPtr<FAssetsData> FAssetDataHandler::GetAssetsData(const FString& AssetsImportJson)
 {
 	FString ImportData = ConcatJsonString(AssetsImportJson);
-	//UE_LOG(LogTemp, Error, TEXT("%s"), *ImportData);
-	//ImportData = TEXT("{\"Assets\"}:[\"Hello\", \"There\"]}");
-
-	AssetsImportData = MakeShareable(new FAssetsData);
-	//TSharedPtr<FJsonObject> ImportDataObject = MakeShareable(new FJsonObject);
-
-	TSharedPtr<FJsonObject> ImportDataObject = DeserializeJson(ImportData);
-
-	// Print the values in the FJSonobject
+	AssetsImportData = MakeShareable(new FAssetsData);	
+	TSharedPtr<FJsonObject> ImportDataObject = DeserializeJson(ImportData);	
 	TArray<TSharedPtr<FJsonValue> > AssetsImportDataArray = ImportDataObject->GetArrayField(TEXT("Assets"));
-
 	for (TSharedPtr<FJsonValue> AssetDataObject : AssetsImportDataArray)
 	{
 		TSharedPtr<FAssetTypeData> ParsedAssetData = GetAssetData(AssetDataObject->AsObject());
@@ -82,10 +75,21 @@ TSharedPtr<FAssetTypeData> FAssetDataHandler::GetAssetData(TSharedPtr<FJsonObjec
 			}
 		}
 
+		//Meta tags array for use in Lod screen sizes
+		TArray<TSharedPtr<FJsonValue>> MetaTagsArray = AssetDataObject->GetArrayField(TEXT("meta"));
+		ParsedAssetData->PlantsLodScreenSizes = GetLodScreenSizes(MetaTagsArray);	
+
+		//Get the Use Billboard tag.
+		ParsedAssetData->AssetMetaInfo->bUseBillboardMaterial = GetBillboardMaterialSubtype(MetaTagsArray);
+
+	}
+	//Get the material ids for modular windows from json
+	if (ParsedAssetData->AssetMetaInfo->Type == TEXT("3d"))
+	{
+		GetMulitpleMaterialIds(AssetDataObject->GetArrayField(TEXT("meta")), ParsedAssetData->AssetMetaInfo);
 	}
 
-	return ParsedAssetData;
-	
+	return ParsedAssetData;	
 }
 
 TSharedPtr<FAssetMetaData> FAssetDataHandler::GetAssetMetaData(TSharedPtr<FJsonObject> MetaDataObject)
@@ -99,8 +103,7 @@ TSharedPtr<FAssetMetaData> FAssetDataHandler::GetAssetMetaData(TSharedPtr<FJsonO
 	ParsedMetaData->Path = MetaDataObject->GetStringField(TEXT("path"));
 	ParsedMetaData->TextureFormat = MetaDataObject->GetStringField(TEXT("textureFormat"));
 	ParsedMetaData->ActiveLOD = MetaDataObject->GetStringField(TEXT("activeLOD"));
-	//UE_LOG(LogTemp, Error, TEXT("Source active lod %s"), *ParsedMetaData->ActiveLOD);
-	//UE_LOG(LogTemp, Error, TEXT("Source active lod %s"), *MetaDataObject->GetStringField(TEXT("activeLOD")));
+	
 	ParsedMetaData->ExportPath = MetaDataObject->GetStringField(TEXT("exportPath"));
 	ParsedMetaData->NamingConvention = MetaDataObject->GetStringField(TEXT("namingConvention"));
 	ParsedMetaData->FolderNamingConvention = MetaDataObject->GetStringField(TEXT("folderNamingConvention"));
@@ -140,13 +143,13 @@ TSharedPtr< FAssetPackedTextures> FAssetDataHandler::GetPackedTextureData(TShare
 
 	for (FString ChannelKey : ChannelKeys)
 	{
-		//UE_LOG(LogTemp, Error, TEXT("Channel Key : %s"), *ChannelKey);
+		
 		TArray<FString> ChannelValues;
 		if (!ChannelsData->HasField(ChannelKey)) continue;
 		TArray<TSharedPtr<FJsonValue>> ChannelKeyData = ChannelsData->GetArrayField(ChannelKey);
 		for (TSharedPtr<FJsonValue> ChData : ChannelKeyData)
 		{
-			//UE_LOG(LogTemp, Error, TEXT("Channel Data : %s"), *ChData->AsString());
+			
 			ChannelValues.Add(ChData->AsString());			
 		}
 		ParsedPackedData->ChannelData.Add(ChannelKey, ChannelValues);
@@ -206,7 +209,86 @@ TSharedPtr<FAssetBillboardData> FAssetDataHandler::GetBillboardData(TSharedPtr<F
 	return ParsedBillboardData;
 }
 
+TMap<FString, TMap<FString, float>> FAssetDataHandler::GetLodScreenSizes(TArray<TSharedPtr<FJsonValue>> MetaTagsArray)
+{
+	TMap<FString, TMap<FString, float>> LODScreenSizes;
 
+	for (TSharedPtr<FJsonValue> MetaData : MetaTagsArray)
+	{
+		TSharedPtr<FJsonObject> MetaObject = MetaData->AsObject();
+		
+		if (MetaObject->GetStringField(TEXT("key")) == TEXT("lodDistance"))
+		{
+			TArray<TSharedPtr<FJsonValue>> ScreenSizesArray = MetaObject->GetArrayField(TEXT("value"));
+			for (TSharedPtr<FJsonValue> ScreenSizes : ScreenSizesArray)
+			{
+				
+				FString VariationKey = FString::FromInt(ScreenSizes->AsObject()->GetIntegerField(TEXT("variation")));
+				VariationKey = TEXT("Var") + VariationKey;
+				TArray<TSharedPtr<FJsonValue>> VariationSSArray = ScreenSizes->AsObject()->GetArrayField(TEXT("distance"));
+				
+				TMap<FString, float> VariationScreenData;				
+				for (TSharedPtr<FJsonValue> VarScreenSize : VariationSSArray)
+				{					
+					FString Lod = TEXT("lod") + FString::FromInt(VarScreenSize->AsObject()->GetIntegerField(TEXT("lod")));
+					float ScreenSize = VarScreenSize->AsObject()->GetNumberField(TEXT("lodDistance"));
+					
+					VariationScreenData.Add( Lod, ScreenSize);
+				}
+				
+				LODScreenSizes.Add(VariationKey, VariationScreenData);
+			}
+
+			break;
+		}
+	}
+
+	return LODScreenSizes;
+}
+
+bool FAssetDataHandler::GetBillboardMaterialSubtype(TArray<TSharedPtr<FJsonValue>> MetaTagsArray)
+{
+	for (TSharedPtr<FJsonValue> MetaData : MetaTagsArray)
+	{
+		TSharedPtr<FJsonObject> MetaObject = MetaData->AsObject();
+
+		if (MetaObject->GetStringField(TEXT("key")) == TEXT("useBillboardMaterial"))
+		{
+			return MetaObject->GetBoolField(TEXT("value"));
+			break;
+		}
+	}
+	return false;
+}
+
+void FAssetDataHandler::GetMulitpleMaterialIds(TArray<TSharedPtr<FJsonValue>> MetaTagsArray, TSharedPtr<FAssetMetaData> AssetMetaInfo)
+{
+	for (TSharedPtr<FJsonValue> MetaData : MetaTagsArray)
+	{
+		TSharedPtr<FJsonObject> MetaObject = MetaData->AsObject();
+
+		if (MetaObject->GetStringField(TEXT("key")) == TEXT("materialIds"))
+		{
+			TArray<TSharedPtr<FJsonValue>> MaterialIds = MetaObject->GetArrayField(TEXT("value"));
+			for (TSharedPtr<FJsonValue> MasterialIDData : MaterialIds)
+			{
+				FString MaterialType = MasterialIDData->AsObject()->GetStringField(TEXT("material"));
+				TArray<TSharedPtr<FJsonValue>> Ids = MasterialIDData->AsObject()->GetArrayField(TEXT("ids"));
+				TArray<int8> MeshMaterialIds;
+				for (TSharedPtr<FJsonValue> MeshMaterialId : Ids)
+				{
+					MeshMaterialIds.Add(MeshMaterialId->AsNumber());
+				}
+
+				AssetMetaInfo->MaterialTypes.Add(MaterialType, MeshMaterialIds);
+			}
+			AssetMetaInfo->bIsModularWindow = true;
+			return;
+			
+		}
+	}
+	AssetMetaInfo->bIsModularWindow = false;
+}
 
 
 FString FAssetDataHandler::GetAssetName(const FString& AssetFileName)

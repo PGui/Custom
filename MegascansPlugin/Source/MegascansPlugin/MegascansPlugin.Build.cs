@@ -1,4 +1,4 @@
-
+// Copyright Epic Games, Inc. All Rights Reserved.
 namespace UnrealBuildTool.Rules
 {
 	public class MegascansPlugin : ModuleRules
@@ -27,13 +27,19 @@ namespace UnrealBuildTool.Rules
                     "EditorScriptingUtilities",
 					"Json",
                     "UnrealEd",
+//GPA BEGIN
+					"Projects",
+//GPA END
                     "MaterialEditor",
 					"AlembicImporter",
 					"AlembicLibrary",
 					"FoliageEdit",
                     "Foliage",
+					"HTTP",
+					"SQLiteCore",
+					"SQLiteSupport",
 
-                }
+				}
 			);
 		}
 	}

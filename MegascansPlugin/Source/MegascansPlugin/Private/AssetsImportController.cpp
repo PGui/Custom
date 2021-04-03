@@ -1,12 +1,18 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
 #include "AssetsImportController.h"
 #include "AssetImportDataHandler.h"
 #include "AssetImporters/ImportSurface.h"
 #include "AssetImporters/Import3D.h"
 #include "AssetImporters/Import3DPlant.h"
 #include "UI/MSSettings.h"
+#include "Utilities/AssetsDatabase.h"
+#include "Utilities/Analytics.h"
+#include "Utilities/AssetData.h"
+#include "AssetImporters/ImportFactory.h"
 
-#include "Runtime/Core/Public/Misc/MessageDialog.h"
+#include "Misc/MessageDialog.h"
 #include "Runtime/Core/Public/Internationalization/Text.h"
+#include "Misc/Paths.h"
 
 
 TSharedPtr<FAssetsImportController> FAssetsImportController::AssetsImportController;
@@ -17,8 +23,7 @@ TSharedPtr<FAssetsImportController> FAssetsImportController::Get()
 {
 	if (!AssetsImportController.IsValid())
 	{
-		AssetsImportController = MakeShareable(new FAssetsImportController);
-		
+		AssetsImportController = MakeShareable(new FAssetsImportController);	
 	}
 	return AssetsImportController;
 }
@@ -26,126 +31,98 @@ TSharedPtr<FAssetsImportController> FAssetsImportController::Get()
 
 
 void FAssetsImportController::DataReceived(const FString DataFromBridge)
-
 {
-	if (IsGarbageCollecting() || GIsSavingPackage) return;	
-
-	ImportAssets(DataFromBridge);
-
 	
-	
+	//UE_LOG(LogTemp, Error, TEXT("Data from Bridge :%s"), *DataFromBridge);
+	if (IsGarbageCollecting() || GIsSavingPackage) return;
+	TArray<FDHIData> DHIAssetsData;
+	if (DHI::GetDHIJsonData(DataFromBridge, DHIAssetsData)) {
+		for (FDHIData CharacterData : DHIAssetsData) {
+			DHI::CopyCharacter(CharacterData);	
+		}
+	}
+	else ImportAssets(DataFromBridge);	
 }
-
 
 // Gets import preferences from a json file, parses the Bridge json and calls the appropriate import function based in asset type
 void FAssetsImportController::ImportAssets(const FString& AssetsImportJson)
 {
-	TSharedPtr<FAssetPreferencesHandler> PrefHandler = FAssetPreferencesHandler::Get();
-	TSharedPtr<F3DPreferences> Type3dPrefs = nullptr;
-	TSharedPtr<F3dPlantPreferences> Type3dPlantPrefs = nullptr;
-	TSharedPtr<FSurfacePreferences> TypeSurfacePrefs = nullptr;
+	bool bSavePackages = false;
+	bool bSkipImportAll = false;
+	bool bImportAll = false;
+	bool bAllSkipOrImport = false;
 
 	TSharedPtr<FAssetsData> AssetsImportData = FAssetDataHandler::Get()->GetAssetsData(AssetsImportJson);
 	
-	
-	checkf(AssetsImportData->AllAssetsData.Num() > 0, TEXT("There was an error reading asset data."));
-	UE_LOG(MSLiveLinkLog, Log, TEXT("Successfully read asset json data"));
-	
-	const UMegascansSettings* MegascansSettings = GetDefault<UMegascansSettings>();
 
+	checkf(AssetsImportData->AllAssetsData.Num() > 0, TEXT("There was an error reading asset data."));	
+	const UMegascansSettings* MegascansSettings = GetDefault<UMegascansSettings>();
 	if (AssetsImportData->AllAssetsData.Num() > 10)
 	{
+		bSavePackages = true;
 		if (MegascansSettings->bBatchImportPrompt)
 		{			
 			EAppReturnType::Type ContinueImport = FMessageDialog::Open(EAppMsgType::OkCancel, FText(FText::FromString("You are about to download more than 10 assets. Press Ok to continue.")));
 			if (ContinueImport == EAppReturnType::Cancel) return;
+			
 		}
 	}
 
+	TSharedPtr<FJsonObject> UIAnalytics = FAnalytics::Get()->GenerateAnalyticsJson();
+	FAnalytics::Get()->SendAnalytics(UIAnalytics);
 	
 
 	for (TSharedPtr<FAssetTypeData> AssetImportData : AssetsImportData->AllAssetsData)
-	{
+	{	
+		//AssetImportData->AssetMetaInfo->bSavePackages = bSavePackages;
+		AssetImportData->AssetMetaInfo->bSavePackages = false;
+		TSharedPtr<FAssetImportParams> AssetSetupParameters = FAssetImportParams::Get();
+		AssetRecord Record;
+		if (FAssetsDatabase::Get()->RecordExists(AssetImportData->AssetMetaInfo->Id, Record) && FPaths::DirectoryExists(FPaths::Combine(FPaths::ProjectContentDir(), Record.Path.Replace(TEXT("/Game"), TEXT("")))))
+		{
+			if (bSkipImportAll)
+			{
+				continue;
+			}
+			if (!bAllSkipOrImport)
+			{
+				EAppReturnType::Type ReimportAssetDlg = FMessageDialog::Open(EAppMsgType::YesNoYesAllNoAll, FText(FText::FromString(FString::Printf(TEXT("The asset %s already exists at %s. Do you want to import this asset.?"), *AssetImportData->AssetMetaInfo->Name, *Record.Path))));
+				if (ReimportAssetDlg == EAppReturnType::No) {
+					continue;
+				}
+				if (ReimportAssetDlg == EAppReturnType::NoAll)
+				{
+					bSkipImportAll = true;
+					bAllSkipOrImport = true;
+					continue;
+				}
+				if (ReimportAssetDlg == EAppReturnType::YesAll)
+				{
+					bAllSkipOrImport = true;
+					bImportAll = true;
+				}
+			}
 
-		
 
+		}
 		if (AssetImportData->AssetMetaInfo->Type == "3d")
 		{
-			if (!Type3dPrefs.IsValid())
-			{
-				Type3dPrefs = PrefHandler->Get3dPreferences();
-			}
-
-			FImport3d::Get()->Import3d(Type3dPrefs, AssetImportData);
-
-			//TSharedPtr<FImport3d> Import3dInst = FImport3d::Get();
-			//Import3dInst->Import3d(Type3dPrefs, AssetImportData);
-			//Import3dInst.Reset();
-
+			
+			FImport3d::Get()->ImportAsset(AssetImportData);			
 		}
-
 		else if (AssetImportData->AssetMetaInfo->Type == "3dplant")
 		{
-			if (!Type3dPlantPrefs.IsValid())
-			{
-				Type3dPlantPrefs = PrefHandler->Get3dPlantPreferences();
-			}
-
-			FImportPlant::Get()->ImportPlant(Type3dPlantPrefs, AssetImportData);
-
-			//TSharedPtr<FImportPlant> Import3dPlantInst = FImportPlant::Get();
-			//Import3dPlantInst->ImportPlant(Type3dPlantPrefs, AssetImportData);
-			//Import3dPlantInst.Reset();
+			FImportPlant::Get()->ImportAsset(AssetImportData);
 		}
 
-		else if (AssetImportData->AssetMetaInfo->Type == "surface")
-		{
-			if (!TypeSurfacePrefs.IsValid())
-			{
-				TypeSurfacePrefs = PrefHandler->GetSurfacePreferences();
-			}
-
-			TSharedPtr<SurfaceImportParams> SImportParams = FImportSurface::Get()->GetSurfaceImportParams(TypeSurfacePrefs, AssetImportData);
-			FImportSurface::Get()->ImportSurface(TypeSurfacePrefs, AssetImportData, SImportParams);
-
-			//TSharedPtr<FImportSurface> ImportSurfaceInst = FImportSurface::Get();
-			//ImportSurfaceInst->ImportSurface(TypeSurfacePrefs, AssetImportData, SImportParams);
-			//ImportSurfaceInst.Reset();
-
+		else if (AssetImportData->AssetMetaInfo->Type == "surface" || AssetImportData->AssetMetaInfo->Type == "atlas" || AssetImportData->AssetMetaInfo->Type == "brush")
+		{			
+			FImportSurface::Get()->ImportAsset(AssetImportData);
 		}
 
-		else if (AssetImportData->AssetMetaInfo->Type == "atlas")
-		{
-			if (!TypeSurfacePrefs.IsValid())
-			{
-				TypeSurfacePrefs = PrefHandler->GetSurfacePreferences();
-			}
-			TSharedPtr<SurfaceImportParams> SImportParams = FImportSurface::Get()->GetSurfaceImportParams(TypeSurfacePrefs, AssetImportData);
-			FImportSurface::Get()->ImportSurface(TypeSurfacePrefs, AssetImportData, SImportParams);
-		}
-
-		else if (AssetImportData->AssetMetaInfo->Type == "brush")
-		{
-			if (!TypeSurfacePrefs.IsValid())
-			{
-				TypeSurfacePrefs = PrefHandler->GetSurfacePreferences();
-			}
-			TSharedPtr<SurfaceImportParams> SImportParams = FImportSurface::Get()->GetSurfaceImportParams(TypeSurfacePrefs, AssetImportData);
-			FImportSurface::Get()->ImportSurface(TypeSurfacePrefs, AssetImportData, SImportParams);
-		}
-
-	}
-	PrefHandler.Reset();
-	AssetsImportData.Reset();
-
-	if(FImport3d::Get().IsValid())
-		FImport3d::Get().Reset();
-
-	if (FImportPlant::Get().IsValid())	
-		FImportPlant::Get().Reset();
-
-	if (FImportSurface::Get().IsValid())
-		FImportSurface::Get().Reset();
-
-
+	}	
+	AssetsImportData.Reset();	
+	FImport3d::Get().Reset();	
+	FImportPlant::Get().Reset();
+	FImportSurface::Get().Reset();
 }

@@ -1,3 +1,4 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
 #pragma once
 #include "CoreMinimal.h"
 
@@ -18,6 +19,10 @@ struct FAssetMetaData {
 	FString NamingConvention;
 	FString FolderNamingConvention;
 	FString MinLOD;
+	bool bUseBillboardMaterial;
+	TMap<FString, TArray<int8>> MaterialTypes;
+	bool bIsModularWindow;
+	bool bSavePackages;
 };
 
 
@@ -64,6 +69,7 @@ struct FAssetLodData {
 };
 
 
+
 struct FAssetTypeData {
 	TSharedPtr<FAssetMetaData> AssetMetaInfo;
 	TArray<TSharedPtr<FAssetTextureData>> TextureComponents;
@@ -72,9 +78,17 @@ struct FAssetTypeData {
 	TArray<TSharedPtr<FAssetPackedTextures>> PackedTextures;
 
 	TArray<TSharedPtr<FAssetBillboardData>> BillboardTextures;
+	TMap<FString, TMap<FString, float>> PlantsLodScreenSizes;
 };
 
 
 struct FAssetsData {
 	TArray<TSharedPtr<FAssetTypeData>> AllAssetsData;
+};
+
+struct FDHIData {
+	FString CharacterPath;
+	FString CommonPath;
+	FString RootPath;
+	FString CharacterName;
 };

@@ -1,6 +1,7 @@
 
+// Copyright Epic Games, Inc. All Rights Reserved.
 #include "UI/SMSWindow.h"
-#include "UI/MSSettings.h"
+
 
 #include "Modules/ModuleManager.h"
 #include "UObject/Class.h"
@@ -227,7 +228,7 @@ void MegascansSettingsWindow::OpenSettingsWindow(const TSharedRef<FTabManager>& 
 	);
 	
 	
-	ExistingWindow->SetOnWindowClosed(FOnWindowClosed::CreateStatic(&MegascansSettingsWindow::SaveSettings, MegascansSettings));	
+	//ExistingWindow->SetOnWindowClosed(FOnWindowClosed::CreateStatic(&MegascansSettingsWindow::SaveSettings, MegascansSettings));	
 	
 	MSSettingsWindow = ExistingWindow;
 	
@@ -245,11 +246,12 @@ void MegascansSettingsWindow::SaveSettings(const TSharedRef<SWindow>& Window, UM
 	MatOverridePathSettings->MasterMaterial3d = MatPresetsSettings->MasterMaterial3d->GetPathName();
 	MatOverridePathSettings->MasterMaterialPlant = MatPresetsSettings->MasterMaterialPlant->GetPathName();
 	MatOverridePathSettings->MasterMaterialSurface = MatPresetsSettings->MasterMaterialSurface->GetPathName();
-
 	MatOverridePathSettings->SaveConfig();
 	
 
 }
+
+
 
 
 

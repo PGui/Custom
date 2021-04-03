@@ -1,17 +1,16 @@
-
+// Copyright Epic Games, Inc. All Rights Reserved.
 #include "TCPServerImp.h"
 #include <string>
-#include "Engine.h"
 #include "NetworkMessage.h"
+
 #include "Runtime/Core/Public/Misc/ScopedSlowTask.h"
 
 
 FTCPServer::FTCPServer() 
 {
 	FThreadSafeCounter  WorkerCounter;
-	FString ThreadName(FString::Printf(TEXT("MyThreadName%i"), WorkerCounter.Increment()));
+	FString ThreadName(FString::Printf(TEXT("MegascansPlugin%i"), WorkerCounter.Increment()));
 	ClientThread = FRunnableThread::Create(this, *ThreadName, 8 * 1024, TPri_Normal);
-
 	
 }
 
@@ -62,21 +61,12 @@ bool FTCPServer::Init()
 	if (Listener == NULL)
 	{
 		FIPv4Address address;
-
-		FIPv4Address::Parse(ipAddressIn, address);
-
-		FIPv4Endpoint endPoint = FIPv4Endpoint(address, portNum);
-
+		FIPv4Address::Parse(LocalHostIP, address);
+		FIPv4Endpoint endPoint = FIPv4Endpoint(address, PortNum);
 		Listener = new FTcpListener(endPoint, FTimespan::FromMilliseconds(300));
-
 		Listener->OnConnectionAccepted().BindRaw(this, &FTCPServer::HandleListenerConnectionAccepted);
-
 		Stopping = false;
 	}
-
-	TArray<FString> Tokens;
-
-	bool sucessful = ParseMessage("32,54,78|.56,.34,.78,1", Tokens);
 	
 	return (Listener != NULL);
 }
@@ -103,7 +93,7 @@ uint32  FTCPServer::Run()
 				
 				Clients.Empty();
 				Clients.Add(Client);
-				connectionTimer.AddZeroed(1);
+				ConnectionTimer.AddZeroed(1);
 			}
 		}
 
@@ -118,28 +108,19 @@ uint32  FTCPServer::Run()
 			for (TArray<class FSocket*>::TIterator ClientIt(Clients); ClientIt; ++ClientIt)
 			{
 				
-				FSocket *Client = *ClientIt;
-
-				
+				FSocket *Client = *ClientIt;				
 				DataSize = 0;
-				FString Request;			
-
+				FString Request;
 				TArray<uint8> data;
-
 				bool haveMessage = false;
 				while (Client->HasPendingData(DataSize))
-				{
-					
-					haveMessage = RecvMessage(Client, DataSize, Request);				
-										
+				{					
+					haveMessage = RecvMessage(Client, DataSize, Request);										
 					if (haveMessage)
-					{
-						
+					{					
 
-						int32 timer = 0;
-						
+						int32 timer = 0;						
 						RecievedJson += Request;						
-						ClearMessage();
 						Request.Empty();
 						haveMessage = false;
 					}
@@ -169,64 +150,10 @@ uint32  FTCPServer::Run()
 	return 0;
 }
 
-bool FTCPServer::ParseMessage(const FString& message, TArray<FString>& Tokens)
-{
-	
-	if (message.ParseIntoArray(Tokens, TEXT("|"), false) == 5)
-	{
-		return true;
-	}
-
-	return false;
-}
-
-
-FString FTCPServer::CreateClientID()
-{
-	return FGuid::NewGuid().ToString();
-}
-
-
-void FTCPServer::RecvEncryptedData(FSocket *sock, TArray<uint8>& data, bool& success)
-{
-
-	check(sock);
-	uint32 DataSize;
-	FArrayReaderPtr Datagram = MakeShareable(new FArrayReader(true));
-	bool hasData = sock->HasPendingData(DataSize);
-
-	if (hasData)
-	{
-		success = true;
-		Datagram->Init(FMath::Min(DataSize, 65507u), 128);
-
-		int32 BytesRead = 0;
-
-		success = sock->Recv(Datagram->GetData(), Datagram->Num(), BytesRead);
-
-		data = *Datagram;
-		return;
-	}
-
-	success = false;
-
-}
-
-FString FTCPServer::recievedMessage(FString message)
-{
-	if (GEngine) GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Green, FString::Printf(TEXT("From Client ~> %s"), *message));
-	return message;
-}
-
-
 
 bool FTCPServer::RecvMessage(FSocket *Socket, uint32 DataSize, FString& Message)
 {
-
-
-	check(Socket);
-	
-
+	check(Socket);	
 	FArrayReaderPtr Datagram = MakeShareable(new FArrayReader(true));
 	int32 stuff = 16;
 	Datagram->Init(FMath::Min(DataSize, 65507u), 81920);
@@ -246,33 +173,11 @@ bool FTCPServer::RecvMessage(FSocket *Socket, uint32 DataSize, FString& Message)
 	return false;
 }
 
-
 bool FTCPServer::HandleListenerConnectionAccepted(class FSocket *ClientSocket, const FIPv4Endpoint& ClientEndpoint)
-{
-	
 
+{
 	PendingClients.Enqueue(ClientSocket);
 	return true;
 }
 
-
-FString FTCPServer::GetMessage()
-{
-	return _tempString;
-}
-
-
-
-void FTCPServer::ClearMessage()
-{
-	_tempString.Empty();
-}
-
-
-
-bool FTCPServer::SocketCheckPendingData(FSocket* Sock)
-{
-	uint32 dataSize = 0;
-	return Sock->HasPendingData(dataSize);
-}
 

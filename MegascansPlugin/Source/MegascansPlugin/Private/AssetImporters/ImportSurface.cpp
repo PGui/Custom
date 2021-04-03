@@ -1,5 +1,7 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
 #include "ImportSurface.h"
-#include "AssetImportData.h"
+
+#include "Utilities/AssetsDatabase.h"
 #include "Utilities/MiscUtils.h"
 #include "AssetToolsModule.h"
 #include "IAssetTools.h"
@@ -18,13 +20,68 @@
 #include "Editor.h"
 #include "PackageTools.h"
 
-
-
-
-
-
 TSharedPtr<FImportSurface> FImportSurface::ImportSurfaceInst;
 
+void FImportSurface::ImportAsset(TSharedPtr<FAssetTypeData> AssetImportData)
+{
+	TSharedPtr<FAssetImportParams> AssetSetupParameters = FAssetImportParams::Get();	
+	TSharedPtr<ImportParamsSurfaceAsset> SurfaceImportParams = (AssetImportData->AssetMetaInfo->Type == TEXT("surface")) ? AssetSetupParameters->GetSurfaceParams(AssetImportData) : AssetSetupParameters->GetAtlasBrushParams(AssetImportData);
+	UMaterialInstanceConstant* MaterialInstance = ImportSurface(AssetImportData, SurfaceImportParams->ParamsAssetType);
+	AssetUtils::FocusOnSelected(SurfaceImportParams->ParamsAssetType->MaterialInstanceDestination);
+	if (AssetImportData->AssetMetaInfo->Type == TEXT("surface") || AssetImportData->AssetMetaInfo->Type == TEXT("atlas") || AssetImportData->AssetMetaInfo->Type == TEXT("brush"))
+	{
+		AssetRecord MSRecord;
+		MSRecord.ID = AssetImportData->AssetMetaInfo->Id;
+		MSRecord.Name = SurfaceImportParams->BaseParams->AssetName;
+		MSRecord.Path = SurfaceImportParams->BaseParams->AssetDestination;
+		MSRecord.Type = AssetImportData->AssetMetaInfo->Type;
+		FAssetsDatabase::Get()->AddRecord(MSRecord);
+	}
+
+	if (MaterialInstance == nullptr) {
+		return;
+	}
+
+	const UMegascansSettings* MegascansSettings = GetDefault<UMegascansSettings>();
+	if (MegascansSettings->bApplyToSelection)
+	{
+		ApplyMaterialToSelection(MaterialInstance);
+	}
+
+}
+
+UMaterialInstanceConstant* FImportSurface::ImportSurface(TSharedPtr<FAssetTypeData> AssetImportData, TSharedPtr<SurfaceParams> SurfaceImportParams)
+{
+	// Import channel packed maps
+	auto PackedImportData = ImportPackedMaps(AssetImportData, SurfaceImportParams->TexturesDestination);
+	// Create Material Instance
+	UMaterialInstanceConstant* MaterialInstance = CreateInstanceMaterial(SurfaceImportParams);
+	
+	
+	// Get list of maps to be filetered on import. All maps that are in channel packed maps will be filetered upon import.
+	const TArray<FString> FilteredTextureTypes = GetFilteredMaps(PackedImportData, MaterialInstance);
+	// Import all the textures
+	TMap<FString, TextureData> TextureMaps = ImportTextureMaps( AssetImportData, SurfaceImportParams, FilteredTextureTypes);
+
+	// Exit if material instance creation failed.
+	if (MaterialInstance == nullptr)
+	{
+		return nullptr;
+	}
+
+	// Plug the imported textures into the Material Instance.
+	MInstanceApplyTextures(TextureMaps, MaterialInstance);
+	if (SurfaceImportParams->bContainsPackedMaps) {
+		MInstanceApplyPackedMaps(PackedImportData, MaterialInstance);
+	}
+
+	
+	AssetUtils::SavePackage(MaterialInstance);
+	
+
+	return MaterialInstance;
+
+}
 
 TSharedPtr<FImportSurface> FImportSurface::Get()
 {
@@ -36,263 +93,63 @@ TSharedPtr<FImportSurface> FImportSurface::Get()
 }
 
 
-
-UMaterialInstanceConstant* FImportSurface::ImportSurface(TSharedPtr<FSurfacePreferences> TypeSurfacePrefs, TSharedPtr<FAssetTypeData> AssetImportData, TSharedPtr<SurfaceImportParams> SImportParams)
-{	
-	
-	
-	const UMegascansSettings* MegascansSettings = GetDefault<UMegascansSettings>();
-	const UMaterialPresetsSettings* MatOverrideSettings = GetDefault< UMaterialPresetsSettings>();
-
-	FString MasterMaterialName = TEXT("");
-	FString SurfaceType = GetSurfaceType(AssetImportData);
-	bool bApplyPackedMaps = true;
-	bEnableExrDisplacement = false;	
-	FString SelectedMaterialName = GetMasterMaterialName(TypeSurfacePrefs, AssetImportData);		
-	
-	auto PackedImportData = ImportPackedMaps(AssetImportData, SImportParams->TexturesDestination);
-	
-	bool bDisplacementEnabled = false;
-
-	if (MegascansSettings->bEnableDisplacement)
-	{
-		if (SurfaceType != "displacement") {
-			MasterMaterialName = TEXT("_Displacement");
-			bDisplacementEnabled = true;
-		}
-		bEnableExrDisplacement = true;
-	}
-
-	if (SurfaceType == "displacement") bEnableExrDisplacement = true;
-
-	if (PackedImportData.Num() > 0)
-	{
-		MasterMaterialName = SelectedMaterialName + MasterMaterialName + TEXT("_CP");
-	}
-	else {
-		MasterMaterialName = SelectedMaterialName + MasterMaterialName;
-		bApplyPackedMaps = false;
-	}
-
-	// Not supporting channel packing
-	//MasterMaterialName = SelectedMaterialName;
-	//bApplyPackedMaps = false;
-	// End of not supporting channel packing
-
-	
-	FString MasterMaterialPath = GetMasterMaterial(MasterMaterialName);
-	if (MasterMaterialPath == TEXT(""))
-	{
-		if ( !bApplyPackedMaps && !bDisplacementEnabled ) {
-			 return nullptr;			
-		}
-		else if (!bApplyPackedMaps && bDisplacementEnabled )
-		{
-				MasterMaterialPath = GetMasterMaterial(SelectedMaterialName );
-				if (MasterMaterialPath == TEXT("")) return nullptr;			
-		}
-		else if(bApplyPackedMaps && !bDisplacementEnabled)
-		{			
-			MasterMaterialPath = GetMasterMaterial(SelectedMaterialName);			
-			bApplyPackedMaps = false;
-			if (MasterMaterialPath == TEXT("")) return nullptr;
-		}
-
-		else if (bApplyPackedMaps && bDisplacementEnabled )
-		{
-			MasterMaterialPath = GetMasterMaterial(SelectedMaterialName + TEXT("_CP"));			
-			if (MasterMaterialPath == TEXT(""))
-			{
-				bApplyPackedMaps = false;
-				MasterMaterialPath = GetMasterMaterial(SelectedMaterialName + TEXT("_Displacement"));
-				if (MasterMaterialPath == TEXT(""))
-				{
-					MasterMaterialPath = GetMasterMaterial(SelectedMaterialName);
-					if (MasterMaterialPath == TEXT("")) return nullptr;
-				}
-			}
-		}
-
-		else {
-			MasterMaterialPath = GetMasterMaterial(SelectedMaterialName);
-			if (MasterMaterialPath == TEXT("")) return nullptr;
-		}
-		
-	}
-
-	FString OverrideMatPath = GetMaterialOverride(AssetImportData);
-	if(OverrideMatPath != TEXT("None") && OverrideMatPath != TEXT(""))
-		if (UEditorAssetLibrary::DoesAssetExist(OverrideMatPath))		
-			MasterMaterialPath = OverrideMatPath;
-		
-	
-	
-	UMaterialInstanceConstant* MaterialInstance = CreateInstanceMaterial(MasterMaterialPath, SImportParams->MInstanceDestination, SImportParams->MInstanceName);
-	
-	const TArray<FString> FilteredTextureTypes = GetFilteredMaps(PackedImportData, MaterialInstance);
-	TMap<FString, TextureData> TextureMaps = ImportTextureMaps(TypeSurfacePrefs, AssetImportData, SImportParams->TexturesDestination, FilteredTextureTypes);
-
-	if (MaterialInstance == nullptr)
-	{
-		return nullptr;
-	}
-
-	MInstanceApplyTextures(TextureMaps, MaterialInstance);	
-	if (bApplyPackedMaps) MInstanceApplyPackedMaps(PackedImportData, MaterialInstance);
-
-	//AssetUtils::SavePackage(MaterialInstance);
-
-	if (MegascansSettings->bApplyToSelection)
-	{
-		if (AssetImportData->AssetMetaInfo->Type == TEXT("surface") || AssetImportData->AssetMetaInfo->Type == TEXT("atlas") || AssetImportData->AssetMetaInfo->Type == TEXT("brush"))
-		{
-			// Apply imported surface on selected assets in Content Browser, currently disabled
-			/*
-			TArray<FAssetData> AssetDatas;
-			FContentBrowserModule& ContentBrowserModule = FModuleManager::LoadModuleChecked<FContentBrowserModule>("ContentBrowser");
-			IContentBrowserSingleton& ContentBrowserSingleton = ContentBrowserModule.Get();
-			ContentBrowserSingleton.GetSelectedAssets(AssetDatas);
-
-			for (FAssetData SelectedAsset : AssetDatas)
-			{
-
-				//UE_LOG(LogTemp, Error, TEXT("Selected asset type is : %s"), *SelectedAsset.AssetClass.ToString());
-				if (SelectedAsset.AssetClass == FName(TEXT("StaticMesh")) || SelectedAsset.AssetClass == FName(TEXT("SkeletalMesh")))
-				{
-					// Apply to selection in Content Browser
-					UStaticMesh* LoadedMesh = CastChecked<UStaticMesh>(LoadAsset(SelectedAsset.ObjectPath.ToString()));			
-					LoadedMesh->SetMaterial(0, CastChecked<UMaterialInterface>(MaterialInstance));
-				}
-			}
-			*/
-
-			//Code for selected assets in Editor
-			
-			USelection* SelectedActors = GEditor->GetSelectedActors();
-			TArray<AActor*> Actors;
-			TArray<ULevel*> UniqueLevels;
-			for (FSelectionIterator Iter(*SelectedActors); Iter; ++Iter)
-			{
-				AActor* Actor = Cast<AActor>(*Iter);
-				TArray<UStaticMeshComponent*> Components;
-				Actor->GetComponents<UStaticMeshComponent>(Components);
-				for (int32 i = 0; i < Components.Num(); i++)
-				{
-					UStaticMeshComponent* MeshComponent = Components[i];
-					int32 mCnt = MeshComponent->GetNumMaterials();
-					for (int j = 0; j < mCnt; j++)						
-						MeshComponent->SetMaterial(j, MaterialInstance);
-
-				}
-			}
-			
-
-		}
-	}
-	
-	AssetUtils::FocusOnSelected(SImportParams->MInstanceDestination);
-	return MaterialInstance;
-}
-
-
-TMap<FString, TextureData> FImportSurface::ImportTextureMaps(TSharedPtr<FSurfacePreferences> TypeSurfacePrefs, TSharedPtr<FAssetTypeData> AssetImportData, const FString& TexturesDestination, const TArray<FString>& FilteredTextureTypes)
+TMap<FString, TextureData> FImportSurface::ImportTextureMaps(TSharedPtr<FAssetTypeData> AssetImportData, TSharedPtr<SurfaceParams> SurfaceImportParams , const TArray<FString>& FilteredTextureTypes)
 {
-	TMap<FString, TextureData> TextureMaps;	
-
+	TMap<FString, TextureData> TextureMaps;
 	for (TSharedPtr<FAssetTextureData> TextureMetaData : AssetImportData->TextureComponents)
 	{
-		FString TextureName = ResolveName(TypeSurfacePrefs->RenamePrefs->TextureName, AssetImportData, TextureMetaData);
+		
 		FString TextureType = TextureMetaData->Type;
 
 		if (FilteredTextureTypes.Contains(TextureType)) continue;
 
-		
-
-		/*
-		if (bEnableExrDisplacement && TextureType == TEXT("displacement"))
-		{			
-			FString TexturePath = TextureMetaData->Path;
-			FString ExrSourcePath = FPaths::GetBaseFilename(TexturePath, false) + TEXT(".exr");
-			
-			//////////////////////////////////////////////////////////////
-			TArray<FString> SupportedResolutions = { "2K", "4K", "8K" };
-			SupportedResolutions.Remove(AssetImportData->AssetMetaInfo->Resolution);
-
-			
-   			 			
-			if (!FPaths::FileExists(ExrSourcePath))
-			{
-				for (FString& DisplacementResolution : SupportedResolutions)
-				{
-					FString ExrSourceName;
-					ExrSourceName = AssetImportData->AssetMetaInfo->Id + "_" + DisplacementResolution + "_Displacement.exr";
-					ExrSourcePath = FPaths::Combine(FPaths::GetPath(TextureMetaData->Path), ExrSourceName);					
-
-					if (FPaths::FileExists(ExrSourcePath))
-					{
-						TextureMetaData->Path = ExrSourcePath;
-						break;
-					}
-				}
-
-
-			}
-			else TextureMetaData->Path = ExrSourcePath;	
-
-		}
-		*/
-
-		UAssetImportTask* TextureImportTask = CreateImportTask(TypeSurfacePrefs, TextureMetaData, TexturesDestination);
+		UAssetImportTask* TextureImportTask = CreateImportTask(TextureMetaData, SurfaceImportParams->TexturesDestination);
 		TextureData TextureImportData = ImportTexture(TextureImportTask);
 
 		if (TextureType == TEXT("normal"))
 		{
-			TextureImportData.TextureAsset->CompressionSettings = TextureCompressionSettings::TC_Normalmap;
-			//const UMegascansSettings* MegascansSettings = GetDefault<UMegascansSettings>();
-			//if(MegascansSettings->bFlipNormalGreenChannel)
-				TextureImportData.TextureAsset->bFlipGreenChannel = 1;
+			
+			TextureImportData.TextureAsset->bFlipGreenChannel = 1;
 		}
+		
 
 		if (TextureType == TEXT("opacity"))
 			TextureImportData.TextureAsset->MipGenSettings = TextureMipGenSettings::TMGS_NoMipmaps;
 
 		TextureImportData.TextureAsset->VirtualTextureStreaming = 0;
 
-		//UTexture* TextureAsset = Cast<UTexture>(LoadAsset(TextureImportData.Path));
+
 		if (NonLinearMaps.Contains(TextureType))
-		{	
+		{
 			TextureImportData.TextureAsset->SRGB = 1;
-			//TextureAsset->SRGB = 1;
 		}
-		else 
+		else
 		{
 			TextureImportData.TextureAsset->SRGB = 0;
-			//TextureAsset->SRGB = 0;
 		}
 
-		if (TextureType != TEXT("normal"))
-			TextureImportData.TextureAsset->CompressionSettings = TextureCompressionSettings::TC_BC7;
-		//TextureAsset->CompressionSettings = TextureCompressionSettings::TC_BC7;
+		if (MapCompressionType.Contains(TextureType))
+		{
+			
+			TextureImportData.TextureAsset->CompressionSettings = MapCompressionType[TextureType];
+		}
 		TextureImportData.TextureAsset->SetFlags(RF_Standalone);
 		TextureImportData.TextureAsset->MarkPackageDirty();
 		TextureImportData.TextureAsset->PostEditChange();
-
-		//AssetUtils::SavePackage(TextureAsset);
+		if (AssetImportData->AssetMetaInfo->bSavePackages)
+		{
+			AssetUtils::SavePackage(TextureImportData.TextureAsset);
+		}
 		
-
 		TextureMaps.Add(TextureType, TextureImportData);
 	}
 	return TextureMaps;
 }
 
-FString FImportSurface::GetMasterMaterial(const FString& SelectedMaterial)
-{
-	CopyPresetTextures();
-	FString MaterialPath = GetMaterial(SelectedMaterial);
-	return (MaterialPath == TEXT("")) ? TEXT("") : MaterialPath;
-}
 
-UAssetImportTask* FImportSurface::CreateImportTask(TSharedPtr<FSurfacePreferences> TypeSurfacePrefs, TSharedPtr<FAssetTextureData> TextureMetaData, const FString& TexturesDestination)
+
+
+UAssetImportTask* FImportSurface::CreateImportTask(TSharedPtr<FAssetTextureData> TextureMetaData, const FString& TexturesDestination)
 {
 	FString Filename;
 	Filename = FPaths::GetBaseFilename(TextureMetaData->NameOverride);
@@ -304,6 +161,27 @@ UAssetImportTask* FImportSurface::CreateImportTask(TSharedPtr<FSurfacePreference
 	TextureImportTask->DestinationPath = TexturesDestination;
 	TextureImportTask->bReplaceExisting = true;
 	return TextureImportTask;
+}
+
+void FImportSurface::ApplyMaterialToSelection(UMaterialInstanceConstant* MaterialInstance)
+{
+	USelection* SelectedActors = GEditor->GetSelectedActors();
+	TArray<AActor*> Actors;
+	TArray<ULevel*> UniqueLevels;
+	for (FSelectionIterator Iter(*SelectedActors); Iter; ++Iter)
+	{
+		AActor* Actor = Cast<AActor>(*Iter);
+		TArray<UStaticMeshComponent*> Components;
+		Actor->GetComponents<UStaticMeshComponent>(Components);
+		for (int32 i = 0; i < Components.Num(); i++)
+		{
+			UStaticMeshComponent* MeshComponent = Components[i];
+			int32 mCnt = MeshComponent->GetNumMaterials();
+			for (int j = 0; j < mCnt; j++)
+				MeshComponent->SetMaterial(j, MaterialInstance);
+
+		}
+	}
 }
 
 TextureData FImportSurface::ImportTexture(UAssetImportTask* TextureImportTask)
@@ -325,27 +203,45 @@ TextureData FImportSurface::ImportTexture(UAssetImportTask* TextureImportTask)
 	return TextureImportData;
 }
 
-UMaterialInstanceConstant* FImportSurface::CreateInstanceMaterial(const FString & MasterMaterialPath, const FString& InstanceDestination, const FString& MInstanceName)
-{
-	if (!UEditorAssetLibrary::DoesAssetExist(MasterMaterialPath)) return nullptr;
+//UMaterialInstanceConstant* FImportSurface::CreateInstanceMaterial(const FString & MasterMaterialPath, const FString& InstanceDestination, const FString& MInstanceName)
+//{
+//	if (!UEditorAssetLibrary::DoesAssetExist(MasterMaterialPath)) return nullptr;
+//
+//	UMaterialInterface* MasterMaterial = CastChecked<UMaterialInterface>(LoadAsset(MasterMaterialPath));
+//	IAssetTools& AssetTools = FModuleManager::GetModuleChecked<FAssetToolsModule>("AssetTools").Get();
+//	UMaterialInstanceConstantFactoryNew* Factory = NewObject<UMaterialInstanceConstantFactoryNew>();
+//
+//	UObject* MaterialInstAsset = AssetTools.CreateAsset(MInstanceName, InstanceDestination, UMaterialInstanceConstant::StaticClass(), Factory);
+//	UMaterialInstanceConstant *MaterialInstance = CastChecked<UMaterialInstanceConstant>(MaterialInstAsset);
+//	
+//	UMaterialEditingLibrary::SetMaterialInstanceParent(MaterialInstance, MasterMaterial);
+//	if (MaterialInstance)
+//	{
+//		MaterialInstance->SetFlags(RF_Standalone);
+//		MaterialInstance->MarkPackageDirty();
+//		MaterialInstance->PostEditChange();
+//
+//		
+//	}
+//	
+//	return MaterialInstance;
+//}
 
-	UMaterialInterface* MasterMaterial = CastChecked<UMaterialInterface>(LoadAsset(MasterMaterialPath));
+UMaterialInstanceConstant* FImportSurface::CreateInstanceMaterial(TSharedPtr<SurfaceParams> SurfaceImportParams)
+{
+	if (!UEditorAssetLibrary::DoesAssetExist(SurfaceImportParams->MasterMaterialPath)) return nullptr;
+	UMaterialInterface* MasterMaterial = CastChecked<UMaterialInterface>(LoadAsset(SurfaceImportParams->MasterMaterialPath));
 	IAssetTools& AssetTools = FModuleManager::GetModuleChecked<FAssetToolsModule>("AssetTools").Get();
 	UMaterialInstanceConstantFactoryNew* Factory = NewObject<UMaterialInstanceConstantFactoryNew>();
-
-	UObject* MaterialInstAsset = AssetTools.CreateAsset(MInstanceName, InstanceDestination, UMaterialInstanceConstant::StaticClass(), Factory);
-	UMaterialInstanceConstant *MaterialInstance = CastChecked<UMaterialInstanceConstant>(MaterialInstAsset);
-	
+	UObject* MaterialInstAsset = AssetTools.CreateAsset(SurfaceImportParams->MaterialInstanceName, SurfaceImportParams->MaterialInstanceDestination, UMaterialInstanceConstant::StaticClass(), Factory);
+	UMaterialInstanceConstant* MaterialInstance = CastChecked<UMaterialInstanceConstant>(MaterialInstAsset);
 	UMaterialEditingLibrary::SetMaterialInstanceParent(MaterialInstance, MasterMaterial);
 	if (MaterialInstance)
 	{
 		MaterialInstance->SetFlags(RF_Standalone);
 		MaterialInstance->MarkPackageDirty();
 		MaterialInstance->PostEditChange();
-
-		
 	}
-	
 	return MaterialInstance;
 }
 
@@ -380,16 +276,42 @@ TArray<FString> FImportSurface::GetPackedMapsList(TSharedPtr<FAssetTypeData> Ass
 }
 
 
+//TMap<FString, TSharedPtr<FAssetPackedTextures>> FImportSurface::ImportPackedMaps(TSharedPtr<FAssetTypeData> AssetImportData, const FString& TexturesDestination)
+//{
+//	TMap<FString, TSharedPtr<FAssetPackedTextures>> PackedImportData;
+//	for (TSharedPtr<FAssetPackedTextures> PackedData : AssetImportData->PackedTextures)
+//	{
+//		UAssetImportTask* TextureImportTask = CreateImportTask(PackedData->PackedTextureData, TexturesDestination);
+//		TextureData TextureImportData = ImportTexture(TextureImportTask);
+//
+//		//UTexture* TextureAsset = Cast<UTexture>(LoadAsset(TextureImportData.Path));
+//		TextureImportData.TextureAsset->SRGB = 0;
+//
+//		FString ImportedMap = TextureImportData.Path;
+//		if (PackedImportData.Contains(ImportedMap))
+//		{
+//			PackedImportData.Remove(ImportedMap);
+//		}
+//		PackedImportData.Add(ImportedMap, PackedData);
+//		if (AssetImportData->AssetMetaInfo->bSavePackages)
+//		{
+//			AssetUtils::SavePackage(TextureImportData.TextureAsset);
+//		}
+//	}
+//	return PackedImportData;
+//}
+
 TMap<FString, TSharedPtr<FAssetPackedTextures>> FImportSurface::ImportPackedMaps(TSharedPtr<FAssetTypeData> AssetImportData, const FString& TexturesDestination)
 {
 	TMap<FString, TSharedPtr<FAssetPackedTextures>> PackedImportData;
 	for (TSharedPtr<FAssetPackedTextures> PackedData : AssetImportData->PackedTextures)
 	{
-		UAssetImportTask* TextureImportTask = CreateImportTask(nullptr, PackedData->PackedTextureData, TexturesDestination);
+		UAssetImportTask* TextureImportTask = CreateImportTask(PackedData->PackedTextureData, TexturesDestination);
 		TextureData TextureImportData = ImportTexture(TextureImportTask);
 
 		//UTexture* TextureAsset = Cast<UTexture>(LoadAsset(TextureImportData.Path));
 		TextureImportData.TextureAsset->SRGB = 0;
+		TextureImportData.TextureAsset->CompressionSettings = TextureCompressionSettings::TC_Masks;
 
 		FString ImportedMap = TextureImportData.Path;
 		if (PackedImportData.Contains(ImportedMap))
@@ -397,7 +319,12 @@ TMap<FString, TSharedPtr<FAssetPackedTextures>> FImportSurface::ImportPackedMaps
 			PackedImportData.Remove(ImportedMap);
 		}
 		PackedImportData.Add(ImportedMap, PackedData);
-		//AssetUtils::SavePackage(TextureAsset);
+
+		if (AssetImportData->AssetMetaInfo->bSavePackages)
+		{
+			AssetUtils::SavePackage(TextureImportData.TextureAsset);
+		}
+		
 	}
 	return PackedImportData;
 }
@@ -482,40 +409,15 @@ FString FImportSurface::GetSurfaceType(TSharedPtr<FAssetTypeData> AssetImportDat
 	return SurfaceType;
 }
 
-FString FImportSurface::GetMasterMaterialName(TSharedPtr<FSurfacePreferences> TypeSurfacePrefs, TSharedPtr<FAssetTypeData> AssetImportData)
-{
-	FString SurfaceType = TEXT("");
-	FString SelectedMaterialName;
-	if (AssetImportData->AssetMetaInfo->Type == TEXT("surface") || AssetImportData->AssetMetaInfo->Type == TEXT("atlas") || AssetImportData->AssetMetaInfo->Type == TEXT("brush"))
-	{
-		SurfaceType = GetSurfaceType(AssetImportData);
-		if (SurfaceTypeMaterials.Contains(SurfaceType))
-		{
-			SelectedMaterialName = SurfaceTypeMaterials[SurfaceType];
-		}
-		else {
-			SelectedMaterialName = TypeSurfacePrefs->MaterialPrefs->SelectedMaterial;
-		}
-	}
-	else {
-		SelectedMaterialName = TypeSurfacePrefs->MaterialPrefs->SelectedMaterial;
-	}
 
-	return SelectedMaterialName;
-}
 
 TArray<FString> FImportSurface::GetFilteredMaps(ChannelPackedData PackedImportData, UMaterialInstanceConstant* MaterialInstance)
 {
-
-	
-
 	TArray<FString> FilteredMaps = GetPackedTypes(PackedImportData);
 	const UMegascansSettings* MegascansSettings = GetDefault<UMegascansSettings>();
-	bool bFalsifyThis = false;
-	
+	bool bFalsifyThis = false;	
 	if (MaterialInstance !=nullptr && MegascansSettings->bFilterMasterMaterialMaps)
-	{
-		
+	{		
 		for (FString MapType : AllMapTypes)
 		{
 			if (UMaterialEditingLibrary::GetMaterialInstanceTextureParameterValue(MaterialInstance, FName(*MapType)) == nullptr)
@@ -532,24 +434,4 @@ TArray<FString> FImportSurface::GetFilteredMaps(ChannelPackedData PackedImportDa
 }
 
 
-TSharedPtr<SurfaceImportParams> FImportSurface::GetSurfaceImportParams(TSharedPtr<FSurfacePreferences> TypePrefs, TSharedPtr<FAssetTypeData> AssetImportData)
-{
-	TSharedPtr<SurfaceImportParams> SImportParams = MakeShareable(new SurfaceImportParams);
-
-	FString RootDestination = GetRootDestination(AssetImportData->AssetMetaInfo->ExportPath);	
-	FString TexturesDestination = FPaths::Combine(RootDestination, ResolvePath(TypePrefs->DestinationPrefs->TextureDestinationPath, AssetImportData));
-	//FString AssetName = RemoveReservedKeywords(NormalizeString(GetUniqueAssetName(TexturesDestination, AssetImportData->AssetMetaInfo->Name)));	
-	FString AssetName = GetUniqueAssetName(TexturesDestination, RemoveReservedKeywords(NormalizeString(AssetImportData->AssetMetaInfo->Name)));
-	TexturesDestination = FPaths::Combine(TexturesDestination, AssetName);
-
-	FString InstanceDestination = FPaths::Combine(RootDestination, ResolvePath(TypePrefs->DestinationPrefs->MaterialDestinationPath, AssetImportData));
-	InstanceDestination = FPaths::Combine(InstanceDestination, AssetName);
-
-	SImportParams->MInstanceName = AssetName + TEXT("_inst");
-	SImportParams->TexturesDestination = TexturesDestination;
-	SImportParams->AssetName = AssetName;
-	SImportParams->MInstanceDestination = InstanceDestination;
-
-	return SImportParams;
-}
 

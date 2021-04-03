@@ -1,3 +1,4 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
 #pragma once
 
 #include "CoreMinimal.h"
@@ -111,6 +112,10 @@ public:
 	/** Replace default master material with your own custom master material for all 3D Plants. Default material is used if field is left empty. */
 	UPROPERTY(Transient, DisplayName = "Plant Master Material", EditAnywhere, Category = "MasterMaterialOverrides")
 		TLazyObjectPtr<class UMaterial> MasterMaterialPlant;
+
+#if WITH_EDITOR
+	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyThatWillChange) override;
+#endif
 
 };
 

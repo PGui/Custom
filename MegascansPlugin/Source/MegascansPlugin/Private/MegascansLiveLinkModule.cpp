@@ -1,9 +1,9 @@
-
+// Copyright Epic Games, Inc. All Rights Reserved.
 #include "IMegascansLiveLinkModule.h"
 #include "UI/QMSUIManager.h"
 #include "UI/MaterialBlendingDetails.h"
 #include "UI/MSSettings.h"
-#include "PropertyEditorModule.h"
+
 
 
 
